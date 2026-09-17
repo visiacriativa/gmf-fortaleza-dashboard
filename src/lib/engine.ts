@@ -247,8 +247,40 @@ export interface SessionBlock {
 
 /** Aula de vídeo vinculada a um assunto do edital, ainda não concluída pelo usuário —
  * prioriza uma que já esteja em andamento (para incentivar terminar antes de começar outra). */
-function findLessonForTopic(state: AppState, userId: UserId, topicId: string) {
-  const candidates = state.lessons.filter((l) => l.topicId === topicId)
+function findLessonForTopic(
+  state: AppState,
+  userId: UserId,
+  topicId: string,
+  excludeIds: Set<string>
+) {
+  const candidates = state.lessons.filter((l) => l.topicId === topicId && !excludeIds.has(l.id))
+  if (candidates.length === 0) return null
+
+  const withProgress = candidates.map((lesson) => {
+    const progress = state.lessonProgress.find((p) => p.lessonId === lesson.id && p.userId === userId)
+    return { lesson, progress }
+  })
+
+  const inProgress = withProgress.find((c) => c.progress?.status === 'em_andamento')
+  if (inProgress) return inProgress
+
+  const notStarted = withProgress.find((c) => c.progress?.status !== 'concluida')
+  return notStarted ?? null
+}
+
+/** Quando nenhuma aula está vinculada a esse assunto específico, cai para a próxima aula
+ * ainda não concluída daquela matéria — assim a sessão sempre aponta para algo assistível,
+ * seguindo a ordem real do curso. `excludeIds` evita repetir a mesma aula em blocos
+ * diferentes da mesma sessão. */
+function findNextLessonForDiscipline(
+  state: AppState,
+  userId: UserId,
+  disciplineId: string,
+  excludeIds: Set<string>
+) {
+  const candidates = state.lessons
+    .filter((l) => l.disciplineId === disciplineId && !excludeIds.has(l.id))
+    .sort((a, b) => a.id.localeCompare(b.id))
   if (candidates.length === 0) return null
 
   const withProgress = candidates.map((lesson) => {
@@ -267,12 +299,16 @@ function focusBlockFor(
   state: AppState,
   userId: UserId,
   current: PriorityResult,
-  focusMin: number
+  focusMin: number,
+  usedLessonIds: Set<string>
 ): SessionBlock {
-  const lessonMatch = findLessonForTopic(state, userId, current.snapshot.topic.id)
+  const lessonMatch =
+    findLessonForTopic(state, userId, current.snapshot.topic.id, usedLessonIds) ??
+    findNextLessonForDiscipline(state, userId, current.snapshot.discipline.id, usedLessonIds)
 
   if (lessonMatch) {
     const { lesson, progress } = lessonMatch
+    usedLessonIds.add(lesson.id)
     const verbo = progress?.status === 'em_andamento' ? 'Continuar' : 'Assistir'
     return {
       kind: 'foco',
@@ -305,6 +341,7 @@ export function buildTodaySession(
   const top = ranking.slice(0, 3)
 
   const blocks: SessionBlock[] = []
+  const usedLessonIds = new Set<string>()
   let remaining = totalMinutes
   let cycle = 0
   let topIndex = 0
@@ -317,7 +354,7 @@ export function buildTodaySession(
   while (remaining > 0 && top.length > 0) {
     const focusMin = Math.min(config.focusMin, remaining)
     const current = top[topIndex % top.length]
-    blocks.push(focusBlockFor(state, userId, current, focusMin))
+    blocks.push(focusBlockFor(state, userId, current, focusMin, usedLessonIds))
     remaining -= focusMin
     topIndex++
     cycle++
