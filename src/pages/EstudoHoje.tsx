@@ -21,10 +21,10 @@ export function EstudoHoje() {
       {
         disciplineId: block.disciplineId ?? null,
         topicId: block.topicId ?? null,
-        lessonId: null,
+        lessonId: block.lessonId ?? null,
         label: block.label,
       },
-      block.kind === 'questoes' ? 'questoes' : 'teoria',
+      block.kind === 'questoes' ? 'questoes' : block.lessonId ? 'video' : 'teoria',
       state.pomodoroConfig
     )
     navigate('/pomodoro')

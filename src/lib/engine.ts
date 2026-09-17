@@ -245,6 +245,56 @@ export interface SessionBlock {
   lessonId?: string
 }
 
+/** Aula de vídeo vinculada a um assunto do edital, ainda não concluída pelo usuário —
+ * prioriza uma que já esteja em andamento (para incentivar terminar antes de começar outra). */
+function findLessonForTopic(state: AppState, userId: UserId, topicId: string) {
+  const candidates = state.lessons.filter((l) => l.topicId === topicId)
+  if (candidates.length === 0) return null
+
+  const withProgress = candidates.map((lesson) => {
+    const progress = state.lessonProgress.find((p) => p.lessonId === lesson.id && p.userId === userId)
+    return { lesson, progress }
+  })
+
+  const inProgress = withProgress.find((c) => c.progress?.status === 'em_andamento')
+  if (inProgress) return inProgress
+
+  const notStarted = withProgress.find((c) => c.progress?.status !== 'concluida')
+  return notStarted ?? null
+}
+
+function focusBlockFor(
+  state: AppState,
+  userId: UserId,
+  current: PriorityResult,
+  focusMin: number
+): SessionBlock {
+  const lessonMatch = findLessonForTopic(state, userId, current.snapshot.topic.id)
+
+  if (lessonMatch) {
+    const { lesson, progress } = lessonMatch
+    const verbo = progress?.status === 'em_andamento' ? 'Continuar' : 'Assistir'
+    return {
+      kind: 'foco',
+      minutes: focusMin,
+      label: `${verbo} Aula ${lesson.numero || ''}${lesson.numero ? ' — ' : ''}${lesson.nome}`.trim(),
+      topicId: current.snapshot.topic.id,
+      disciplineId: current.snapshot.discipline.id,
+      lessonId: lesson.id,
+    }
+  }
+
+  return {
+    kind: 'foco',
+    minutes: focusMin,
+    label: current.snapshot.studied
+      ? `Continuar: ${current.snapshot.topic.name}`
+      : `Iniciar: ${current.snapshot.topic.name}`,
+    topicId: current.snapshot.topic.id,
+    disciplineId: current.snapshot.discipline.id,
+  }
+}
+
 export function buildTodaySession(
   state: AppState,
   userId: UserId,
@@ -267,15 +317,7 @@ export function buildTodaySession(
   while (remaining > 0 && top.length > 0) {
     const focusMin = Math.min(config.focusMin, remaining)
     const current = top[topIndex % top.length]
-    blocks.push({
-      kind: 'foco',
-      minutes: focusMin,
-      label: current.snapshot.studied
-        ? `Continuar: ${current.snapshot.topic.name}`
-        : `Iniciar: ${current.snapshot.topic.name}`,
-      topicId: current.snapshot.topic.id,
-      disciplineId: current.snapshot.discipline.id,
-    })
+    blocks.push(focusBlockFor(state, userId, current, focusMin))
     remaining -= focusMin
     topIndex++
     cycle++
